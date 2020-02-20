@@ -451,6 +451,51 @@ void pitch_filter(kiss_fft_cpx *X, const kiss_fft_cpx *P, const float *Ex, const
   }
 }
 
+float rnnoise_process_frame_with_gain(DenoiseState *st, float *out, const float *in, const float *gains) {
+  int i;
+  kiss_fft_cpx X[FREQ_SIZE];
+  kiss_fft_cpx P[WINDOW_SIZE];
+  float x[FRAME_SIZE];
+  float Ex[NB_BANDS], Ep[NB_BANDS];
+  float Exp[NB_BANDS];
+  float features[NB_FEATURES];
+  float g[NB_BANDS];
+  float gf[FREQ_SIZE]={1};
+  float vad_prob = 0;
+  int silence;
+  static const float a_hp[2] = {-1.99599, 0.99600};
+  static const float b_hp[2] = {-2, 1};
+  biquad(x, st->mem_hp_x, in, b_hp, a_hp, FRAME_SIZE);
+  silence = compute_frame_features(st, X, P, Ex, Ep, Exp, features, x);
+
+  if (!silence) {
+    compute_rnn(&st->rnn, g, &vad_prob, features);
+
+    for (int k = 0; k < NB_BANDS; ++k)
+    {
+      g[k] = gains[k];
+    }
+
+    pitch_filter(X, P, Ex, Ep, Exp, g);
+    for (i=0;i<NB_BANDS;i++) {
+      float alpha = .6f;
+      g[i] = MAX16(g[i], alpha*st->lastg[i]);
+      st->lastg[i] = g[i];
+    }
+    interp_band_gain(gf, g);
+#if 1
+    for (i=0;i<FREQ_SIZE;i++) {
+      X[i].r *= gf[i];
+      X[i].i *= gf[i];
+    }
+#endif
+  }
+
+  frame_synthesis(st, out, X);
+  return vad_prob;
+}
+
+
 float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
   int i;
   kiss_fft_cpx X[FREQ_SIZE];
@@ -471,8 +516,12 @@ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
   if (!silence) {
     compute_rnn(&st->rnn, g, &vad_prob, features);
     pitch_filter(X, P, Ex, Ep, Exp, g);
+    // raise gain to th power of 2 to saturate the noise even further
     for (i=0;i<NB_BANDS;i++) {
-      float alpha = .6f;
+      g[i] = pow(g[i], 2);
+    }
+    for (i=0;i<NB_BANDS;i++) {
+      float alpha = 0.1f;
       g[i] = MAX16(g[i], alpha*st->lastg[i]);
       st->lastg[i] = g[i];
     }

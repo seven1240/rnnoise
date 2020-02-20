@@ -535,7 +535,7 @@ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
     compute_rnn(&st->rnn, g, &vad_prob, features);
     pitch_filter(X, P, Ex, Ep, Exp, g);
     for (i=0;i<NB_BANDS;i++) {
-      float alpha = .4f;
+      float alpha = .6f;
       g[i] = MAX16(g[i], alpha*st->lastg[i]);
       st->lastg[i] = g[i];
     }
@@ -711,7 +711,8 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
 
   // the function reads the samples and the noise sequentially
   // for the unknown reason (yet)
-  // so the sample
+  // so the sample 
+  while (1) {
     kiss_fft_cpx X[FREQ_SIZE], Y[FREQ_SIZE], N[FREQ_SIZE], P[WINDOW_SIZE];
     float Ex[NB_BANDS], Ey[NB_BANDS], En[NB_BANDS], Ep[NB_BANDS];
     float Exp[NB_BANDS];
@@ -720,14 +721,9 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
     float g[NB_BANDS];
     short tmp[FRAME_SIZE];
     float vad=0;
-    float E=0; 
-  while (1) {
-
+    float E=0;
     if (count==maxCount) break;
     //if ((count%1000)==0) fprintf(stderr, "%d\r", count);
-
-    // data augmentation by the gain and low-pass filtering. disabled for now
-#ifdef AUG
     if (++gain_change_count > 1000) {
       speech_gain = pow(10., (-40+(rand()%60))/20.);
       noise_gain = pow(10., (-30+(rand()%50))/20.);
@@ -737,27 +733,14 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
       gain_change_count = 0;
       rand_resp(a_noise, b_noise);
       rand_resp(a_sig, b_sig);
-      // selects which band to pass and which to cut. disabled for now
-      
       lowpass = FREQ_SIZE * 3000./24000. * pow(50., rand()/(double)RAND_MAX);
-      
       for (i=0;i<NB_BANDS;i++) {
         if (eband5ms[i]<<FRAME_SIZE_SHIFT > lowpass) {
           band_lp = i;
           break;
         }
       }
-      
     }
-
-#else
-    // allow small variation of the responses
-    speech_gain = 1.0f;
-    noise_gain = 1.0f;
-    rand_resp(a_noise, b_noise);
-    rand_resp(a_sig, b_sig);
-#endif
-
     if (speech_gain != 0) {
       fread(tmp, sizeof(short), FRAME_SIZE, f1);
       if (feof(f1)) {
@@ -803,17 +786,15 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
     else vad = 1.f;
 
     frame_analysis(st, Y, Ey, x);
-    //frame_analysis(noise_state, N, En, n);
-    //for (i=0;i<NB_BANDS;i++) Ln[i] = log10(1e-2+En[i]);
+    frame_analysis(noise_state, N, En, n);
+    for (i=0;i<NB_BANDS;i++) Ln[i] = log10(1e-2+En[i]);
     int silence = compute_frame_features(noisy, X, P, Ex, Ep, Exp, features, xn);
     pitch_filter(X, P, Ex, Ep, Exp, g);
     //printf("%f %d\n", noisy->last_gain, noisy->last_period);
     for (i=0;i<NB_BANDS;i++) {
       g[i] = sqrt((Ey[i]+1e-3)/(Ex[i]+1e-3));
       if (g[i] > 1) g[i] = 1;
-#ifdef AUG
-      //if (silence || i > band_lp) g[i] = -1;
-#endif
+      if (silence || i > band_lp) g[i] = -1;
       if (Ey[i] < 5e-2 && Ex[i] < 5e-2) g[i] = -1;
       if (vad==0 && noise_gain==0) g[i] = -1;
     }
@@ -826,9 +807,6 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
     fwrite(&vad, sizeof(float), 1, f3);
 #endif
   }
-  rnnoise_destroy(st);
-  rnnoise_destroy(noise_state);
-  rnnoise_destroy(noisy);
   //fprintf(stderr, "matrix size: %d x %d\n", count, NB_FEATURES + 2*NB_BANDS + 1);
   fclose(f1);
   fclose(f2);
@@ -908,39 +886,21 @@ extern int extractTestFeatures(const short *voiceData, int voiceDataLength,
     //if ((count%1000)==0) fprintf(stderr, "%d\r", count);
     // change gain every 4 seconds
     if (++gain_change_count > 800) {
-      speech_gain = MAX16(1.0, pow(10., (-40+(rand()%60))/20.));
-      noise_gain = MAX16(1.0, pow(10., (-30+(rand()%50))/20.));
+      speech_gain = pow(10., (-40+(rand()%60))/20.);
+      noise_gain = pow(10., (-30+(rand()%50))/20.);
       if (rand()%10==0) noise_gain = 0;
       noise_gain *= speech_gain;
       if (rand()%10==0) speech_gain = 0;
       gain_change_count = 0;
-
-      noise_gain = 1.0f;
-      speech_gain = 1.0f;
-      /*
-      a_noise[0] = 1.0f;
-      a_noise[1] = 1.0f;
-      b_noise[0] = 1.0f;
-      b_noise[1] = 1.0f;
-
-      a_sig[0] = 1.0f;
-      a_sig[1] = 1.0f;
-      b_sig[0] = 1.0f;
-      b_sig[1] = 1.0f;
-      */
       rand_resp(a_noise, b_noise);
       rand_resp(a_sig, b_sig);
-      /*
       lowpass = FREQ_SIZE * 3000./24000. * pow(50., rand()/(double)RAND_MAX);
-      
       for (i=0;i<NB_BANDS;i++) {
         if (eband5ms[i]<<FRAME_SIZE_SHIFT > lowpass) {
           band_lp = i;
           break;
         }
       }
-      */
-      
     }
     if (speech_gain != 0) {
       fread(tmp, sizeof(short), FRAME_SIZE, f1);
@@ -995,7 +955,7 @@ extern int extractTestFeatures(const short *voiceData, int voiceDataLength,
     for (i=0;i<NB_BANDS;i++) {
       g[i] = sqrt((Ey[i]+1e-3)/(Ex[i]+1e-3));
       if (g[i] > 1) g[i] = 1;
-      //if (silence || i > band_lp) g[i] = -1;
+      if (silence || i > band_lp) g[i] = -1;
       if (Ey[i] < 5e-2 && Ex[i] < 5e-2) g[i] = -1;
       if (vad==0 && noise_gain==0) g[i] = -1;
     }
@@ -1009,14 +969,10 @@ extern int extractTestFeatures(const short *voiceData, int voiceDataLength,
 #endif
   }
   //fprintf(stderr, "matrix size: %d x %d\n", count, NB_FEATURES + 2*NB_BANDS + 1);
-  rnnoise_destroy(st);
-  rnnoise_destroy(noise_state);
-  rnnoise_destroy(noisy);
   fclose(f1);
   fclose(f2);
   fclose(f3);
   fclose(f4);
-
   return 0;
 }
 
