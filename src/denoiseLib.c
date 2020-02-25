@@ -612,7 +612,7 @@ static void rand_resp(float *a, float *b) {
 
 extern int getFeatureSize()
 {
-  return NB_FEATURES + 2*NB_BANDS + 1;
+  return NB_FEATURES + 2*NB_BANDS + 1 + FRAME_SIZE;
 }
 
 
@@ -660,7 +660,8 @@ extern int processAudioWithGain(const short *audioDataIn, int numAudioSamples,
 extern int extractFeatures(const short *voiceData, int voiceDataLength, 
                     const short *noiseData, int noiseDataLength,
                     float *featureSamples,
-                    int numOutputSamples
+                    int numOutputSamples,
+                    int writeAudio
                     )
 {
   int i;
@@ -696,8 +697,8 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
 
   f1 = fmemopen(voiceData, voiceDataLength * sizeof(short), "r");
   f2 = fmemopen(noiseData, noiseDataLength * sizeof(short), "r");
-  // 42 input features, 22 - gain, 22 noise gain, 1 VAD
-  int numValuesPerSample = NB_FEATURES + 2*NB_BANDS + 1;
+  // 42 input features, 22 - gain, 22 noise gain, 1 VAD, FRAME_SIZE audio samples
+  int numValuesPerSample = getFeatureSize();
   maxCount = numOutputSamples;
   // update the allocated buffer to avoid the extra null byte be written at the end of the stream
   // see fmemopen for more info
@@ -718,10 +719,11 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
     float Ln[NB_BANDS];
     float features[NB_FEATURES];
     float g[NB_BANDS];
-    short tmp[FRAME_SIZE];
-    float vad=0;
-    float E=0; 
+    short tmp[FRAME_SIZE]; 
   while (1) {
+    
+    float vad=0;
+    float E=0;
 
     if (count==maxCount) break;
     //if ((count%1000)==0) fprintf(stderr, "%d\r", count);
@@ -781,10 +783,17 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
     } else {
       for (i=0;i<FRAME_SIZE;i++) n[i] = 0;
     }
+
+//Since we do not use cepstral mean normalization, we use
+// data augmentation to make the network robust to variations in
+// frequency responses. This is achieved by filtering the noise and
+//speech signal independently for each training example using
+// a second order filter of the form
+
     biquad(x, mem_hp_x, x, b_hp, a_hp, FRAME_SIZE);
-    biquad(x, mem_resp_x, x, b_sig, a_sig, FRAME_SIZE);
+    //biquad(x, mem_resp_x, x, b_sig, a_sig, FRAME_SIZE);
     biquad(n, mem_hp_n, n, b_hp, a_hp, FRAME_SIZE);
-    biquad(n, mem_resp_n, n, b_noise, a_noise, FRAME_SIZE);
+    //biquad(n, mem_resp_n, n, b_noise, a_noise, FRAME_SIZE);
     for (i=0;i<FRAME_SIZE;i++) xn[i] = x[i] + n[i];
     if (E > 1e9f) {
       vad_cnt=0;
@@ -824,6 +833,10 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
     fwrite(g, sizeof(float), NB_BANDS, f3);
     fwrite(Ln, sizeof(float), NB_BANDS, f3);
     fwrite(&vad, sizeof(float), 1, f3);
+    if (writeAudio > 0)
+        fwrite(xn, sizeof(float), FRAME_SIZE, f3);
+    else
+        fseek(f3, sizeof(float) * FRAME_SIZE, SEEK_CUR);
 #endif
   }
   rnnoise_destroy(st);
