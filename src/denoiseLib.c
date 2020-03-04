@@ -614,9 +614,15 @@ static void rand_resp(float *a, float *b) {
   b[1] = .75*uni_rand();
 }
 
-extern int getFeatureSize()
+extern int getTrainingSampleSize()
 {
   return NB_FEATURES + 2*NB_BANDS + 1 + FRAME_SIZE;
+}
+
+// pure feature size, no noise or vad
+extern int getFeatureSize()
+{
+  return NB_FEATURES + FRAME_SIZE;
 }
 
 
@@ -718,7 +724,7 @@ extern int extractFeaturesOrg(const short *voiceData, int voiceDataLength,
     short tmp[FRAME_SIZE];
     fread(tmp, sizeof(short), FRAME_SIZE, f2);
   }
-  while (1) {
+
     kiss_fft_cpx X[FREQ_SIZE], Y[FREQ_SIZE], N[FREQ_SIZE], P[WINDOW_SIZE];
     float Ex[NB_BANDS], Ey[NB_BANDS], En[NB_BANDS], Ep[NB_BANDS];
     float Exp[NB_BANDS];
@@ -726,10 +732,13 @@ extern int extractFeaturesOrg(const short *voiceData, int voiceDataLength,
     float features[NB_FEATURES];
     float g[NB_BANDS];
     short tmp[FRAME_SIZE];
+
+  while (1) {
+
     float vad=0;
     float E=0;
     if (count==maxCount) break;
-    if ((count%1000)==0) fprintf(stderr, "%d\r", count);
+    //if ((count%1000)==0) fprintf(stderr, "%d\r", count);
     if (++gain_change_count > 2821) {
       speech_gain = pow(10., (-40+(rand()%60))/20.);
       noise_gain = pow(10., (-30+(rand()%50))/20.);
@@ -799,7 +808,9 @@ extern int extractFeaturesOrg(const short *voiceData, int voiceDataLength,
     for (i=0;i<NB_BANDS;i++) {
       g[i] = sqrt((Ey[i]+1e-3)/(Ex[i]+1e-3));
       if (g[i] > 1) g[i] = 1;
-      if (silence || i > band_lp) g[i] = -1;
+      //if (silence || i > band_lp) g[i] = -1;
+      // disable low pass filtering
+      if (silence) g[i] = -1;
       if (Ey[i] < 5e-2 && Ex[i] < 5e-2) g[i] = -1;
       if (vad==0 && noise_gain==0) g[i] = -1;
     }
@@ -1020,6 +1031,69 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
   fclose(f3);
   return 0;
 }
+
+
+extern int extractFeaturesInference(const short *voiceData, int voiceDataLength, 
+                    float *featureSamples,
+                    int numOutputSamples,
+                    int writeAudio
+                    )
+{
+  int i;
+  static const float a_hp[2] = {-1.99599, 0.99600};
+  static const float b_hp[2] = {-2, 1};
+  float x[FRAME_SIZE];
+  FILE *f1;
+  FILE *f3;
+  DenoiseState *st;
+  st = rnnoise_create(NULL);
+
+  f1 = fmemopen(voiceData, voiceDataLength * sizeof(short), "r");
+  // 42 input features, FRAME_SIZE audio samples
+  int numValuesPerSample = getFeatureSize();
+  int maxCount = numOutputSamples;
+  // update the allocated buffer to avoid the extra null byte be written at the end of the stream
+  // see fmemopen for more info
+  f3 = fmemopen(featureSamples, maxCount * numValuesPerSample * sizeof(float), "r+");
+
+    kiss_fft_cpx X[FREQ_SIZE], Y[FREQ_SIZE], N[FREQ_SIZE], P[WINDOW_SIZE];
+    float Ex[NB_BANDS], Ey[NB_BANDS], En[NB_BANDS], Ep[NB_BANDS];
+    float Exp[NB_BANDS];
+    float Ln[NB_BANDS];
+    float features[NB_FEATURES];
+    float g[NB_BANDS];
+    short tmp[FRAME_SIZE]; 
+    
+    for (int counter = 0; counter < numOutputSamples; ++counter)
+    {
+      fread(tmp, sizeof(short), FRAME_SIZE, f1);
+      if (feof(f1))
+      {
+          break;
+      }
+      for (i=0;i<FRAME_SIZE;i++) x[i] = tmp[i];
+
+      biquad(x, st->mem_hp_x, x, b_hp, a_hp, FRAME_SIZE);
+      int silence = compute_frame_features(st, X, P, Ex, Ep, Exp, features, x);
+     
+     /*
+    for (int k = 0; k < 42; ++k)
+    {
+      features[k] = counter * 10;
+    } */
+
+    fwrite(features, sizeof(float), NB_FEATURES, f3);
+    if (writeAudio > 0)
+        fwrite(x, sizeof(float), FRAME_SIZE, f3);
+    else
+        fseek(f3, sizeof(float) * FRAME_SIZE, SEEK_CUR);
+    }
+  rnnoise_destroy(st);
+  fclose(f1);
+  fclose(f3);
+  return 0;
+}
+
 
 extern int extractTestFeatures(const short *voiceData, int voiceDataLength, 
                     const short *noiseData, int noiseDataLength,
