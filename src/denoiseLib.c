@@ -165,23 +165,6 @@ void interp_band_gain(float *g, const float *bandE) {
 
 static CommonState common;
 
-// common objects management
-
-/*
-static CommonState *common = NULL
-
-extern void init()
-{
-  common = malloc(sizeof(CommonState));
-}
-
-extern void deinit()
-{
-  free(common)
-}
-*/
-
-
 
 static void check_init() {
   int i;
@@ -613,16 +596,20 @@ static void rand_resp(float *a, float *b) {
   b[0] = .75*uni_rand();
   b[1] = .75*uni_rand();
 }
-
-extern int getTrainingSampleSize()
+// complete feature size including audio features, noise gains, gt gains, vad
+extern int getSampleSize()
 {
   return NB_FEATURES + 2*NB_BANDS + 1 + FRAME_SIZE;
 }
-
-// pure feature size, no noise or vad
+// pure feature size + audiobuffer used to compute the features, no noise or vad
+extern int getFrameSize()
+{
+  return FRAME_SIZE;
+}
+// training feature size
 extern int getFeatureSize()
 {
-  return NB_FEATURES + FRAME_SIZE;
+  return NB_FEATURES; 
 }
 
 
@@ -711,7 +698,7 @@ extern int extractFeaturesOrg(const short *voiceData, int voiceDataLength,
   f1 = fmemopen(voiceData, voiceDataLength * sizeof(short), "r");
   f2 = fmemopen(noiseData, noiseDataLength * sizeof(short), "r");
   // 42 input features, 22 - gain, 22 noise gain, 1 VAD, FRAME_SIZE audio samples
-  int numValuesPerSample = getFeatureSize();
+  int numValuesPerSample = getSampleSize();
   maxCount = numOutputSamples;
   // update the allocated buffer to avoid the extra null byte be written at the end of the stream
   // see fmemopen for more info
@@ -881,7 +868,7 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
   f1 = fmemopen(voiceData, voiceDataLength * sizeof(short), "r");
   f2 = fmemopen(noiseData, noiseDataLength * sizeof(short), "r");
   // 42 input features, 22 - gain, 22 noise gain, 1 VAD, FRAME_SIZE audio samples
-  int numValuesPerSample = getFeatureSize();
+  int numValuesPerSample = getSampleSize();
   maxCount = numOutputSamples;
   // update the allocated buffer to avoid the extra null byte be written at the end of the stream
   // see fmemopen for more info
@@ -1050,7 +1037,7 @@ extern int extractFeaturesInference(const short *voiceData, int voiceDataLength,
 
   f1 = fmemopen(voiceData, voiceDataLength * sizeof(short), "r");
   // 42 input features, FRAME_SIZE audio samples
-  int numValuesPerSample = getFeatureSize();
+  int numValuesPerSample = getFeatureSize() + getFrameSize();
   int maxCount = numOutputSamples;
   // update the allocated buffer to avoid the extra null byte be written at the end of the stream
   // see fmemopen for more info
