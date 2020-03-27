@@ -874,11 +874,13 @@ extern int extractFeatures(const short *voiceData, int voiceDataLength,
   // see fmemopen for more info
   f3 = fmemopen(featureSamples, maxCount * numValuesPerSample * sizeof(float), "r+");
 
+  /*
   for(i=0;i<150;i++) {
     short tmp[FRAME_SIZE];
     fread(tmp, sizeof(short), FRAME_SIZE, f2);
     // read noise from buffer into tmp, skip 150 first samples
   }
+  */
 
   // the function reads the samples and the noise sequentially
   // for the unknown reason (yet)
